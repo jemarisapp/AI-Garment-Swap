@@ -123,24 +123,62 @@ function extractJSON(text) {
  * Step 1: Analyze person image and extract PERSON_DESCRIPTION and PERSON_JSON
  */
 async function analyzePersonImage(personImageBase64) {
-  const analysisPrompt = `Analyze this person image in detail. You are extracting structured information for a garment replacement system.
+  const analysisPrompt = `Analyze this person image in EXTREME detail, with special focus on capturing the exact pose and body position. You are extracting structured information for a garment replacement system where the pose must remain IDENTICAL.
+
+CRITICAL: Pay special attention to:
+- Exact joint positions and angles (shoulders, elbows, wrists, hips, knees, ankles)
+- Body orientation and facing direction
+- Limb positions and bends
+- Head position, tilt, and rotation
+- Weight distribution and stance
+- All anatomical landmarks that define the pose
 
 Provide:
-1. A detailed natural language description of the person, pose, scene, lighting, and current garment.
-2. A structured JSON object with the following structure:
+1. A detailed natural language description of the person, pose (with emphasis on exact body positioning), scene, lighting, and current garment.
+2. A structured JSON object with the following structure (fill in ALL pose details with precision):
 
 {
   "body_pose": {
     "position": "description of body position",
     "torso_angle": "angle description",
+    "torso_rotation": "torso rotation (facing left/right/forward/backward)",
+    "torso_lean": "torso lean direction and degree",
     "support": "what supports the body",
     "head_position": "head position",
-    "head_tilt": "head tilt angle",
-    "left_arm": "left arm position",
-    "right_arm": "right arm position",
-    "left_hand": "left hand position and interaction",
-    "right_hand": "right hand position and interaction",
-    "legs": "legs position"
+    "head_tilt": "head tilt angle (left/right/up/down)",
+    "head_rotation": "head rotation (facing direction)",
+    "shoulder_alignment": "shoulder position and alignment",
+    "left_arm": {
+      "shoulder": "left shoulder position",
+      "elbow": "left elbow angle and position",
+      "wrist": "left wrist position",
+      "hand": "left hand position and interaction",
+      "overall_angle": "left arm overall angle and orientation"
+    },
+    "right_arm": {
+      "shoulder": "right shoulder position",
+      "elbow": "right elbow angle and position",
+      "wrist": "right wrist position",
+      "hand": "right hand position and interaction",
+      "overall_angle": "right arm overall angle and orientation"
+    },
+    "left_leg": {
+      "hip": "left hip position",
+      "knee": "left knee angle and position",
+      "ankle": "left ankle position",
+      "foot": "left foot placement and angle",
+      "weight_bearing": "whether bearing weight"
+    },
+    "right_leg": {
+      "hip": "right hip position",
+      "knee": "right knee angle and position",
+      "ankle": "right ankle position",
+      "foot": "right foot placement and angle",
+      "weight_bearing": "whether bearing weight"
+    },
+    "overall_stance": "overall body stance and weight distribution",
+    "body_orientation": "which direction the body is facing",
+    "joint_angles": "key joint angles that define the pose"
   },
   "facial_details": {
     "expression": "facial expression",
@@ -373,13 +411,20 @@ ${instruction}
 
   return `ROLE:
 
-You are a photorealistic garment replacement engine. You take:
+You are a photorealistic garment replacement engine. This is an EDITING task, not a generation task.
 
-1. A person image with an existing outfit
+You take:
 
-2. ${productText.charAt(0).toUpperCase() + productText.slice(1)} that show target ${garmentText}
+1. A person image with an existing outfit (FIRST IMAGE) - this contains the person, pose, face, body, and the garment(s) to be REPLACED
 
-and you replace the original ${garmentText} on the person with the target ${garmentText}.
+2. ${productText.charAt(0).toUpperCase() + productText.slice(1)} that show target ${garmentText} (SUBSEQUENT IMAGES) - these show the new garment(s) to use
+
+TASK: Replace the garment(s) visible on the person in the first image with the ${garmentText} from the product image${isMultipleGarments ? 's' : ''}.
+
+CRITICAL: 
+- Identify which garment(s) on the person need to be replaced (typically the top/shirt/jacket/sweatshirt)
+- Remove the old garment(s) and replace with the new ${garmentText} from product image${isMultipleGarments ? 's' : ''}
+- Keep EVERYTHING else from the first image (person, pose, face, hair, hands, background, lighting)
 
 REFERENCES AND STRUCTURE:
 
@@ -403,9 +448,16 @@ Output a single photorealistic image. The result should look like the person ori
 
 INSTRUCTIONS FOR THE MODEL:
 
-1) Garment replacement only
+1) Garment replacement only - THIS IS THE ONLY CHANGE ALLOWED
 
 ${replacementInstruction}
+
+SPECIFIC INSTRUCTIONS:
+- Look at the person in the PERSON IMAGE and identify the garment(s) they are currently wearing
+- These are the garment(s) that must be REPLACED
+- Take the ${garmentText} from the PRODUCT IMAGE${isMultipleGarments ? 'S' : ''} and replace the old ${garmentText}
+- The new ${garmentText} must be fitted to the person's existing pose and body
+- All graphics, logos, colors, and details from the product image${isMultipleGarments ? 's' : ''} must be accurately reproduced
 
 2) Image priority order
 
@@ -415,9 +467,26 @@ ${replacementInstruction}
 
 3. JSON guides interpretation but never overrides visuals.
 
-3) Preserve all non garment elements
+3) CRITICAL: Preserve exact pose and body position
 
-Do not change the person's face, hands, hair, accessories, background, lighting, surface, or camera angle.
+The person's pose MUST remain EXACTLY as shown in the person image. This is the highest priority requirement.
+
+POSE ELEMENTS THAT MUST BE PRESERVED (DO NOT ALTER):
+- Exact body orientation and facing direction
+- All joint positions (shoulders, elbows, wrists, hips, knees, ankles)
+- Arm positions, angles, and bends (maintain exact elbow and wrist positions)
+- Leg positions, stance, and weight distribution (maintain exact knee angles and foot placement)
+- Head position, tilt, and rotation (maintain exact chin angle and gaze direction)
+- Torso angle, rotation, and lean (maintain exact body posture)
+- Shoulder alignment and posture
+- Overall body silhouette and contour
+- All anatomical landmarks and proportions
+
+The pose described in PERSON_JSON body_pose section provides detailed joint and limb positions. Use this as a reference to ensure the pose remains identical. The person image is the visual source of truth - match it exactly.
+
+4) Preserve all non garment elements
+
+Do not change the person's face, hands, hair, accessories, background, lighting, surface, or camera angle. The only change should be the garment(s) being replaced.
 
 4) Copy the target ${garmentText} accurately
 
@@ -433,9 +502,17 @@ Reproduce the ${garmentText} from the product image${isMultipleGarments ? 's' : 
 
 Do not design new ${garmentText}. Do not modify graphics. Do not simplify or restyle elements.
 
-5) Fit ${garmentText} to pose
+5) Fit ${garmentText} to the EXISTING pose (DO NOT change pose to fit garments)
 
-Match folds, compression, sleeve bending, and draping based on the body pose described in PERSON_JSON and visible in the person image.
+CRITICAL: The pose is fixed and unchangeable. The ${garmentText} must be fitted to match the existing pose exactly.
+
+- Match folds, compression, sleeve bending, and draping based on the body pose described in PERSON_JSON body_pose section
+- Garments must follow the body's current position and form - do not adjust the body to fit the garments
+- Respect all joint angles and limb positions from the pose analysis
+- Ensure fabric behavior (wrinkles, draping, compression) accurately reflects the pose
+- Sleeves must follow arm angles exactly as shown in the person image
+- Torso garments must follow torso rotation and lean exactly
+- Leg garments must follow leg positions and knee angles exactly
 
 6) Lighting consistency
 
@@ -451,7 +528,20 @@ Add realistic contact shadows.
 
 OUTPUT SUMMARY:
 
-Create a final image where the person is wearing the ${garmentText} from the product image${isMultipleGarments ? 's' : ''}. Everything else remains unchanged.`;
+Create a final image where:
+1. The person's pose, body position, face, identity, and all non-garment elements are IDENTICAL to the person image
+2. Only the garment(s) are replaced with those from the product image${isMultipleGarments ? 's' : ''}
+3. The new ${garmentText} ${isMultipleGarments ? 'are' : 'is'} perfectly fitted to the existing pose
+4. The result looks as if the person was originally photographed wearing these ${garmentText} in this exact pose
+
+VERIFICATION CHECKLIST:
+- [ ] Pose matches person image exactly (compare joint positions)
+- [ ] Body orientation unchanged
+- [ ] Face, hands, hair unchanged
+- [ ] Background and lighting unchanged
+- [ ] Only garments are different
+- [ ] Garments fit naturally to the pose
+- [ ] No artifacts or distortions`;
 }
 
 // API Route: Swap

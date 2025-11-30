@@ -15,20 +15,85 @@ export async function POST(req: NextRequest) {
     // Construct the parts for the multimodal request
     const parts = [];
 
-    // 1. Add the text instruction
-    const prompt = `You are an expert fashion editor and photo retoucher.
+    // 1. Add the text instruction with enhanced pose preservation
+    const prompt = `You are an expert fashion editor and photo retoucher specializing in precise garment replacement while maintaining exact body positioning.
+
+TASK: GARMENT REPLACEMENT
+${instruction || "Replace the top/upper garment on the person in the first image with the garment from the subsequent image(s)."}
+
+IMPORTANT: This is an EDITING task, not a generation task. You must:
+1. Take the EXACT person, pose, face, body, and scene from the first image
+2. Identify the garment(s) to replace (typically the top/shirt/jacket/sweatshirt visible on the person)
+3. Replace ONLY those garment(s) with the garment(s) from the subsequent image(s)
+4. Keep EVERYTHING else identical (pose, face, hair, hands, background, lighting, etc.)
+
+INPUT IMAGES:
+1. FIRST IMAGE (Model/Scene): This is your PRIMARY REFERENCE containing:
+   - The person with their current pose, face, body, and garment(s) to be replaced
+   - The background and scene
+   - The lighting and camera angle
+   - ALL non-garment elements that must remain unchanged
+
+2. SUBSEQUENT IMAGE(S) (Product/Garment): These show:
+   - The target garment(s) to replace the existing garment(s) with
+   - Use these ONLY for garment design, colors, graphics, and style
+   - DO NOT use these for pose, body, face, or scene elements
     
-    Task: ${instruction || "Swap the clothing onto the model."}
+    CRITICAL POSE PRESERVATION REQUIREMENTS:
     
-    Inputs:
-    1. The first image is the 'Model/Scene'.
-    2. The subsequent images are the 'Garments/Objects'.
+    The model's pose, body position, and stance MUST remain EXACTLY as shown in the first image. This includes:
     
-    Goal:
-    Generate a photorealistic result where the model in the first image is wearing the garments from the subsequent images.
-    - Maintain the model's exact face, identity, pose, and the background environment.
-    - Adjust the fit, lighting, and texture of the garments to match the scene perfectly.
-    - Ensure high quality and realism.`;
+    POSE ELEMENTS TO PRESERVE (DO NOT ALTER):
+    - Exact body orientation and angle (facing direction, body rotation)
+    - Arm positions and angles (elbow bends, wrist positions, hand placement)
+    - Leg positions and stance (knee angles, foot placement, weight distribution)
+    - Head position and tilt (chin angle, head rotation, gaze direction)
+    - Shoulder alignment and posture
+    - Torso rotation and lean
+    - Overall body silhouette and contour
+    
+    ANATOMICAL LANDMARKS TO MAINTAIN:
+    - Joint positions (shoulders, elbows, wrists, hips, knees, ankles)
+    - Body proportions and scale
+    - Muscle definition and body shape
+    - Natural body curves and lines
+    
+    SCENE ELEMENTS TO PRESERVE:
+    - Background environment (unchanged)
+    - Lighting direction and intensity (apply to new garments only)
+    - Camera angle and perspective
+    - Shadows cast by the body (maintain original shadow positions)
+    - Props and accessories (unchanged)
+    
+    GARMENT INTEGRATION RULES:
+    - Fit the new garments to the EXISTING pose - do not change pose to fit garments
+    - Garments must follow the body's current position and form
+    - Maintain natural fabric draping that respects the pose
+    - Preserve realistic wrinkles and folds that match the body position
+    - Ensure garments interact correctly with body parts in their current positions
+    
+STEP-BY-STEP PROCESS:
+1. ANALYZE the first image: Identify the person, their pose, face, current garment(s), and all scene elements
+2. IDENTIFY which garment(s) to replace: Typically the top/shirt/jacket/sweatshirt visible on the person
+3. EXTRACT garment design from subsequent image(s): Note colors, graphics, style, materials, but NOT pose or body
+4. REPLACE the garment: Remove the old garment and place the new garment, fitting it to the EXISTING pose
+5. PRESERVE everything else: Keep pose, face, hair, hands, background, lighting, shadows exactly as in first image
+
+OUTPUT REQUIREMENTS:
+Generate a photorealistic EDITED image where:
+1. The person's pose, body position, face, identity, hair, hands, and background are IDENTICAL to the first image
+2. ONLY the garment(s) visible on the person are replaced with those from subsequent images
+3. The new garment(s) are perfectly fitted to the existing pose (do NOT change pose to fit garments)
+4. Lighting and shadows match the original scene exactly
+5. The result looks as if the person was originally photographed wearing these new garments in this exact pose
+6. All graphics, logos, and details from the product image(s) are accurately reproduced on the garment
+    
+    QUALITY STANDARDS:
+    - Photorealistic quality matching the original image
+    - Seamless integration of new garments
+    - No visible artifacts or distortions
+    - Natural fabric behavior respecting the pose
+    - Professional fashion photography standards`;
 
     parts.push({ text: prompt });
 
@@ -50,9 +115,9 @@ export async function POST(req: NextRequest) {
       });
     });
 
-    // Use Gemini 2.5 Flash Image for editing tasks (supports multimodal input well)
+    // Use Gemini 3 Pro Image Preview for better editing quality
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-3-pro-image-preview',
       contents: {
         parts: parts
       }
