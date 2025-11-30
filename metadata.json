@@ -1,0 +1,5 @@
+{
+  "name": "AI Garment Swap",
+  "description": "Virtual try-on application allowing users to swap garments on a person using AI.",
+  "requestFramePermissions": []
+}
