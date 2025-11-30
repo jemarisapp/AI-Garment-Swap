@@ -173,41 +173,35 @@ export default function App() {
       setGenerationLibrarySelection(null); // Reset internal buffer
   };
 
-  const handleSceneGeneration = async (params: SceneGenerationParams) => {
-    try {
-        setStatus('generating');
-        const generatedUrl = await generateScene(params);
+  const handleGenerationComplete = (resultUrl: string, type: 'scene' | 'object') => {
+    if (type === 'scene') {
         setSceneImage({
             file: null,
-            preview: generatedUrl,
-            url: generatedUrl,
+            preview: resultUrl,
+            url: resultUrl,
             name: 'Generated Scene'
         });
-        setStatus('idle');
-        setIsGenerationPanelOpen(false);
-    } catch (err) {
-        setStatus('error');
-        setError('Failed to generate scene.');
-    }
-  };
-
-  const handleObjectGeneration = async (params: ObjectGenerationParams) => {
-    try {
-        setStatus('generating');
-        const generatedUrl = await generateObject(params);
+    } else {
         const newObj: UploadedImage = {
             file: null,
-            preview: generatedUrl,
-            url: generatedUrl,
-            name: `Generated ${params.type}`
+            preview: resultUrl,
+            url: resultUrl,
+            name: 'Generated Object'
         };
         setObjectImages(prev => [...prev, newObj]);
-        setStatus('idle');
-        setIsGenerationPanelOpen(false);
-    } catch (err) {
-        setStatus('error');
-        setError('Failed to generate object.');
     }
+    setIsGenerationPanelOpen(false);
+  };
+
+  const handleSaveGeneratedToElements = (url: string, type: 'scene' | 'object') => {
+     const newElement: ProjectElement = {
+        id: Date.now().toString(),
+        type: type === 'scene' ? 'scene' : 'object',
+        name: `Generated ${type === 'scene' ? 'Scene' : 'Object'}`,
+        preview: url,
+        date: new Date().toISOString()
+     };
+     setElements(prev => [newElement, ...prev]);
   };
 
   // PROCESS SWAP
@@ -332,10 +326,9 @@ export default function App() {
                 {isGenerationPanelOpen && (
                     <GenerationPanel 
                         mode={generationMode}
-                        onGenerateScene={handleSceneGeneration}
-                        onGenerateObject={handleObjectGeneration}
+                        onComplete={handleGenerationComplete}
                         onCancel={() => setIsGenerationPanelOpen(false)}
-                        isGenerating={status === 'generating'}
+                        onSaveToElements={handleSaveGeneratedToElements}
                         // Library integration
                         onOpenLibrary={handleOpenLibraryGen}
                         librarySelection={generationLibrarySelection}

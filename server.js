@@ -33,45 +33,94 @@ app.post('/api/generate', async (req, res) => {
     const { type, params } = req.body;
 
     let prompt = "";
+    let parts = [];
 
     // Construct the prompt based on the request type
     if (type === 'scene') {
       const { prompt: sceneDesc, gender, aspectRatio, modelConfig, locationConfig } = params;
       
-      prompt = `Generate a photorealistic fashion scene. 
-      Aspect Ratio: ${aspectRatio}.
+      console.log('🎨 Generating Scene...');
+      console.log('  Aspect Ratio:', aspectRatio);
+      console.log('  Gender:', gender);
+
+      let modelDescription = modelConfig.prompt || 'A professional fashion model';
+      let locationDescription = locationConfig.prompt || 'A professional studio background';
+
+      // Analyze Model Image if provided
+      if (modelConfig.source !== 'generate' && modelConfig.imageUrl) {
+        console.log('  Analyzing uploaded model image...');
+        const analysis = await analyzeReferenceImage(modelConfig.imageUrl, 'model');
+        modelDescription = `REFERENCE MODEL VISUALS: ${analysis.description}\n\nUse this description to generate a similar model, but adapted to the scene description.`;
+        
+        // Add visual reference to generation parts
+        const cleanBase64 = modelConfig.imageUrl.replace(/^data:image\/\w+;base64,/, "");
+        parts.push({
+          inlineData: { mimeType: 'image/png', data: cleanBase64 }
+        });
+        console.log('  ✅ Model analysis complete & image added to generation');
+      }
+
+      // Analyze Location Image if provided
+      if (locationConfig.source !== 'generate' && locationConfig.imageUrl) {
+        console.log('  Analyzing uploaded location image...');
+        const analysis = await analyzeReferenceImage(locationConfig.imageUrl, 'location');
+        locationDescription = `REFERENCE LOCATION VISUALS: ${analysis.description}\n\nUse this description to generate a similar location.`;
+        
+        // Add visual reference to generation parts
+        const cleanBase64 = locationConfig.imageUrl.replace(/^data:image\/\w+;base64,/, "");
+        parts.push({
+          inlineData: { mimeType: 'image/png', data: cleanBase64 }
+        });
+        console.log('  ✅ Location analysis complete & image added to generation');
+      }
+
+      prompt = `ROLE: You are an expert fashion photographer and art director.
       
-      Scene Description: ${sceneDesc}
+      TASK: Generate a high-end, photorealistic fashion scene using the provided reference images strictly.
       
-      Model Details:
-      Gender: ${gender || 'Not specified'}
-      Description: ${modelConfig.prompt || 'A professional fashion model'}
+      SCENE COMPOSITION:
+      ${sceneDesc}
       
-      Location Details:
-      Description: ${locationConfig.prompt || 'A studio background'}
+      MODEL DETAILS:
+      Gender: ${gender}
+      ${modelDescription}
+      IMPORTANT: Use the first image provided as the VISUAL REFERENCE for the model. Copy the identity, face, body type, and look as closely as possible.
       
-      Lighting: Professional fashion photography lighting, high detail, 4k.`;
+      LOCATION DETAILS:
+      ${locationDescription}
+      ${locationConfig.source !== 'generate' ? 'IMPORTANT: Use the second image provided as the VISUAL REFERENCE for the location.' : ''}
       
+      TECHNICAL SPECIFICATIONS:
+      - Aspect Ratio: ${aspectRatio}
+      - Lighting: Professional fashion photography lighting, perfectly matched to the scene
+      - Camera: High-end phase one camera, 100MP, sharp focus
+      - Quality: 8k, photorealistic, highly detailed texture and skin tones
+      - Style: Vogue/Harper's Bazaar editorial style`;
+      
+      // Insert the prompt at the BEGINNING of parts (or end? Text usually comes first or along with images)
+      // We already pushed images if they exist. Let's put text first.
+      parts.unshift({ text: prompt });
+
     } else if (type === 'object') {
       const { prompt: objectDesc, type: garmentType } = params;
       prompt = `Generate a high-quality product shot of a fashion item.
       Item Type: ${garmentType}
       Description: ${objectDesc}
-      Style: Isolated on a neutral background, professional product photography.`;
+      Style: Isolated on a neutral background, professional product photography, soft even lighting, high texture detail.`;
+      
+      parts.push({ text: prompt });
     }
 
     // Use Gemini 3 Pro Image Preview for high-quality generation
+    console.log('  Calling Gemini API for generation...');
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-image-preview',
       contents: {
-        parts: [
-          { text: prompt }
-        ],
+        parts: parts,
       },
       config: {
-        // Only 1 image for now
         imageConfig: {
-          aspectRatio: type === 'scene' ? "3:4" : "1:1", // Mapping simple aspect ratios
+          aspectRatio: type === 'scene' ? (params.aspectRatio || "3:4") : "1:1",
           imageSize: "1K"
         }
       }
@@ -92,6 +141,7 @@ app.post('/api/generate', async (req, res) => {
       throw new Error("No image generated");
     }
 
+    console.log('  ✅ Image generated successfully');
     res.json({ 
       imageUrl: `data:image/png;base64,${base64Image}` 
     });
@@ -101,6 +151,47 @@ app.post('/api/generate', async (req, res) => {
     res.status(500).json({ error: "Failed to generate image" });
   }
 });
+
+/**
+ * Helper to analyze reference images for generation
+ */
+async function analyzeReferenceImage(imageBase64, type) {
+  const prompt = type === 'model' 
+    ? "Analyze this fashion model. Describe their physical appearance, ethnicity, hair style, body type, and pose in detail. Ignore the clothing if possible, or describe it generally."
+    : "Analyze this location/background. Describe the environment, lighting, architectural details, colors, and mood in detail.";
+
+  // Clean base64 string if it has a prefix
+  const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: {
+      parts: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'image/png',
+            data: cleanBase64
+          }
+        }
+      ]
+    },
+    config: {
+      generationConfig: {
+        mediaResolution: "media_resolution_high"
+      }
+    }
+  });
+
+  let text = '';
+  if (response.candidates && response.candidates[0].content.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.text) text += part.text;
+    }
+  }
+
+  return { description: text.trim() };
+}
 
 /**
  * Helper function to extract JSON from text response
@@ -246,6 +337,11 @@ PERSON_JSON: [JSON object]`;
           }
         }
       ]
+    },
+    config: {
+      generationConfig: {
+        mediaResolution: "media_resolution_high"
+      }
     }
   });
 
@@ -328,6 +424,11 @@ PRODUCT_JSON: [JSON object]`;
           }
         }
       ]
+    },
+    config: {
+      generationConfig: {
+        mediaResolution: "media_resolution_high"
+      }
     }
   });
 
@@ -622,6 +723,11 @@ app.post('/api/swap', async (req, res) => {
         model: 'gemini-3-pro-image-preview',
         contents: {
           parts: parts
+        },
+        config: {
+          generationConfig: {
+            mediaResolution: "media_resolution_high"
+          }
         }
       });
       console.log(`  ✅ API call successful`);
@@ -634,6 +740,11 @@ app.post('/api/swap', async (req, res) => {
           model: 'gemini-3-pro-image-preview',
           contents: {
             parts: parts
+          },
+          config: {
+            generationConfig: {
+              mediaResolution: "media_resolution_high"
+            }
           }
         });
         console.log(`  ✅ Fallback API call successful`);

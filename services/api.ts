@@ -97,12 +97,62 @@ export const processSwap = async (
  * Calls the Next.js API route to generate a scene or object
  */
 export const generateScene = async (params: SceneGenerationParams): Promise<string> => {
+  // Handle image conversions for model/location if they are uploads
+  const processedParams = { ...params };
+
+  // Convert Model Image to Base64 if present
+  if (params.modelConfig.source !== 'generate' && params.modelConfig.image) {
+    try {
+      const base64 = await fileToBase64(params.modelConfig.image);
+      processedParams.modelConfig = {
+        ...params.modelConfig,
+        imageUrl: base64 // Send base64 as imageUrl for the backend
+      };
+    } catch (e) {
+      console.error("Failed to convert model image", e);
+    }
+  } else if (params.modelConfig.source !== 'generate' && params.modelConfig.imageUrl && params.modelConfig.imageUrl.startsWith('blob:')) {
+    // Handle blob URLs (from library or upload preview)
+     try {
+      const base64 = await urlToBase64(params.modelConfig.imageUrl);
+      processedParams.modelConfig = {
+        ...params.modelConfig,
+        imageUrl: base64
+      };
+    } catch (e) {
+      console.error("Failed to convert model blob url", e);
+    }
+  }
+
+  // Convert Location Image to Base64 if present
+  if (params.locationConfig.source !== 'generate' && params.locationConfig.image) {
+    try {
+      const base64 = await fileToBase64(params.locationConfig.image);
+      processedParams.locationConfig = {
+        ...params.locationConfig,
+        imageUrl: base64
+      };
+    } catch (e) {
+      console.error("Failed to convert location image", e);
+    }
+  } else if (params.locationConfig.source !== 'generate' && params.locationConfig.imageUrl && params.locationConfig.imageUrl.startsWith('blob:')) {
+     try {
+      const base64 = await urlToBase64(params.locationConfig.imageUrl);
+      processedParams.locationConfig = {
+        ...params.locationConfig,
+        imageUrl: base64
+      };
+    } catch (e) {
+      console.error("Failed to convert location blob url", e);
+    }
+  }
+
   const response = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'scene',
-      params
+      params: processedParams
     })
   });
 
