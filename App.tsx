@@ -6,16 +6,19 @@ import { ResultDisplay } from './components/ResultDisplay';
 import { ElementsPanel } from './components/ElementsPanel';
 import { GenerationPanel } from './components/GenerationPanel';
 import { UploadedImage, UploadStatus, ProjectElement, ElementType, SceneGenerationParams, ObjectGenerationParams } from './types';
-import { uploadImages, processSwap, generateScene, generateObject } from './services/api';
-import { Wand2, Sparkles, Shirt, Image as ImageIcon, ArrowRight, AlertTriangle, LayoutGrid, ChevronRight, MessageSquarePlus } from 'lucide-react';
+import { uploadImages, processSwap, generateScene, generateObject, generateNewPose } from './services/api';
+import { Wand2, Sparkles, Shirt, Image as ImageIcon, ArrowRight, AlertTriangle, LayoutGrid, ChevronRight, MessageSquarePlus, Video, UserPlus } from 'lucide-react';
 
 export default function App() {
+  // View State
+  const [activeView, setActiveView] = useState<'home' | 'pose' | 'video'>('home');
+
   // Scene State (Replaces Person)
   const [sceneImage, setSceneImage] = useState<UploadedImage | null>(null);
   
   // Objects State (Replaces Product, now Array)
   const [objectImages, setObjectImages] = useState<UploadedImage[]>([]);
-
+  
   // Instruction Prompt
   const [instruction, setInstruction] = useState('');
 
@@ -28,10 +31,14 @@ export default function App() {
   const [activeSidebarTab, setActiveSidebarTab] = useState<ElementType>('scene');
   // 'scene' = main Scene slot, 'object' = main Object slot
   // 'gen-model' = Generation Panel Model slot, 'gen-location' = Generation Panel Location slot
-  const [sidebarSelectionContext, setSidebarSelectionContext] = useState<'main-scene' | 'main-object' | 'gen-model' | 'gen-location' | null>(null); 
+  // 'result-pose-garment' = Result Display New Pose Modal Garment slot
+  const [sidebarSelectionContext, setSidebarSelectionContext] = useState<'main-scene' | 'main-object' | 'gen-model' | 'gen-location' | 'result-pose-garment' | null>(null); 
 
   // Library Selection Buffer for Generation Panel
   const [generationLibrarySelection, setGenerationLibrarySelection] = useState<{ type: 'gen-model' | 'gen-location', element: ProjectElement } | null>(null);
+  
+  // Library Selection Buffer for Result Pose Modal
+  const [resultPoseLibrarySelection, setResultPoseLibrarySelection] = useState<ProjectElement | null>(null);
 
   const [elements, setElements] = useState<ProjectElement[]>([
     {
@@ -75,6 +82,8 @@ export default function App() {
       const file = files[0];
       const preview = URL.createObjectURL(file);
       setSceneImage({ file, preview, name: file.name });
+      setStatus('idle'); // Reset status on new selection
+      setError(null);
     } else {
       setSceneImage(null);
     }
@@ -84,6 +93,8 @@ export default function App() {
     if (files.length > 0) {
       const newImages = files.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }));
       setObjectImages(newImages);
+      setStatus('idle'); // Reset status on new selection
+      setError(null);
     } else {
       setObjectImages([]);
     }
@@ -131,6 +142,13 @@ export default function App() {
       setIsSidebarOpen(true);
   };
 
+  // Opening library from Result Display New Pose Modal
+  const handleOpenLibraryResultPose = () => {
+      setSidebarSelectionContext('result-pose-garment');
+      setActiveSidebarTab('object');
+      setIsSidebarOpen(true);
+  };
+
   const handleSelectElement = (element: ProjectElement) => {
     switch (sidebarSelectionContext) {
       case 'main-scene':
@@ -161,6 +179,11 @@ export default function App() {
         
       case 'gen-location':
         setGenerationLibrarySelection({ type: 'gen-location', element });
+        setIsSidebarOpen(false);
+        break;
+
+      case 'result-pose-garment':
+        setResultPoseLibrarySelection(element);
         setIsSidebarOpen(false);
         break;
     }
@@ -199,7 +222,7 @@ export default function App() {
         type: type === 'scene' ? 'scene' : 'object',
         name: `Generated ${type === 'scene' ? 'Scene' : 'Object'}`,
         preview: url,
-        date: new Date().toISOString()
+        dateCreated: Date.now()
      };
      setElements(prev => [newElement, ...prev]);
   };
@@ -234,6 +257,62 @@ export default function App() {
     }
   };
 
+  // PROCESS NEW POSE
+  const handleGenerateNewPose = async (newPoseInstruction?: string, refImage?: File | string | null) => {
+    if (!sceneImage) return; // Object images optional for re-posing single image
+
+    const instructionToUse = newPoseInstruction || instruction;
+
+    try {
+      setStatus('processing');
+      setError(null);
+
+      // Upload files if they are real files (not library URLs)
+      let objectFiles: File[] = [];
+      let finalObjectUrls: string[] = [];
+      
+      if (refImage) {
+          if (typeof refImage === 'string') {
+              // Library URL
+              finalObjectUrls = [refImage];
+          } else {
+              // File upload
+              objectFiles = [refImage];
+          }
+      } else {
+          // Use existing object images
+          objectFiles = objectImages.map(img => img.file).filter((f): f is File => f !== null);
+      }
+
+      const result = await uploadImages(sceneImage.file, objectFiles);
+      
+      const finalSceneUrl = sceneImage.file ? result.sceneUrl! : sceneImage.url!;
+      
+      if (!refImage || typeof refImage !== 'string') {
+          // If we didn't use a library string, we use the uploaded URLs (or original existing URLs if no refImage provided and no new upload happened?)
+          // Actually if objectFiles was populated from objectImages, result.objectUrls has the new uploads.
+          // But we need to mix them with existing URLs if objectImages had mix?
+          // Simplification: If refImage is provided as File, result.objectUrls[0] is it.
+          // If refImage is NOT provided, we use objectImages logic.
+          
+          if (refImage) {
+             finalObjectUrls = result.objectUrls;
+          } else {
+             finalObjectUrls = objectImages.map((img, idx) => img.file ? result.objectUrls[idx] : img.url!);
+          }
+      }
+
+      const resultUrl = await generateNewPose(finalSceneUrl, finalObjectUrls, instructionToUse);
+      
+      setResultImageUrl(resultUrl);
+      setStatus('complete');
+    } catch (err) {
+      console.error("Detailed Pose Generation Error:", err);
+      setError(err instanceof Error ? err.message : 'An error occurred during pose generation.');
+      setStatus('error');
+    }
+  };
+
   const handleReset = () => {
     setSceneImage(null);
     setObjectImages([]);
@@ -243,7 +322,28 @@ export default function App() {
     setError(null);
   };
 
-  const isReadyToGenerate = sceneImage && objectImages.length > 0 && status === 'idle';
+  const handleSaveResultToLibrary = (type: ElementType) => {
+    if (!resultImageUrl) return;
+    const newElement: ProjectElement = {
+      id: Date.now().toString(),
+      name: `Generated ${type.charAt(0).toUpperCase() + type.slice(1)}`,
+      type,
+      preview: resultImageUrl,
+      dateCreated: Date.now()
+    };
+    setElements(prev => [newElement, ...prev]);
+    setIsSidebarOpen(true);
+    setActiveSidebarTab(type);
+  };
+
+  const isReadyToGenerate = sceneImage && objectImages.length > 0 && status !== 'processing' && status !== 'uploading';
+  const isReadyToPose = sceneImage && status !== 'processing' && status !== 'uploading';
+
+  // Helper to switch views and reset state
+  const switchView = (view: 'home' | 'pose' | 'video') => {
+      setActiveView(view);
+      handleReset();
+  };
 
   return (
     <div className="min-h-screen bg-black text-white relative overflow-x-hidden selection:bg-[#0071e3] selection:text-white">
@@ -262,11 +362,35 @@ export default function App() {
       {/* Header */}
       <header className="fixed top-0 w-full z-30 bg-black/80 backdrop-blur-md border-b border-white/10 transition-all duration-300">
         <div className="max-w-6xl mx-auto px-6 h-14 md:h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 group cursor-pointer" onClick={handleReset}>
-            <div className="text-white transition-transform group-hover:scale-110">
-              <Sparkles size={18} fill="white" />
-            </div>
-            <h1 className="font-semibold text-lg tracking-tight text-white">StyleSwap</h1>
+          <div className="flex items-center gap-8">
+              <div className="flex items-center gap-2 group cursor-pointer" onClick={() => switchView('home')}>
+                <div className="text-white transition-transform group-hover:scale-110">
+                  <Sparkles size={18} fill="white" />
+                </div>
+                <h1 className="font-semibold text-lg tracking-tight text-white">Lumira.ai</h1>
+              </div>
+
+              {/* Navigation */}
+              <nav className="hidden md:flex items-center gap-6">
+                  <button 
+                    onClick={() => switchView('home')}
+                    className={`text-sm font-medium transition-colors ${activeView === 'home' ? 'text-white' : 'text-[#86868b] hover:text-white'}`}
+                  >
+                    Swap
+                  </button>
+                  <button 
+                    onClick={() => switchView('pose')}
+                    className={`text-sm font-medium transition-colors ${activeView === 'pose' ? 'text-white' : 'text-[#86868b] hover:text-white'}`}
+                  >
+                    New Pose
+                  </button>
+                  <button 
+                    onClick={() => switchView('video')}
+                    className={`text-sm font-medium transition-colors ${activeView === 'video' ? 'text-white' : 'text-[#86868b] hover:text-white'}`}
+                  >
+                    Video
+                  </button>
+              </nav>
           </div>
           
           <div className="flex items-center gap-4">
@@ -289,14 +413,18 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-6 py-24 md:py-32">
         
-        {/* Intro Section - Only show when idle */}
+        {/* Intro Section - Dynamic based on View */}
         {status === 'idle' && !resultImageUrl && (
           <div className="text-center mb-12 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
             <h2 className="text-5xl md:text-6xl font-bold text-white mb-4 tracking-tight">
-              Create Your Scene.
+              {activeView === 'home' && "Create Your Scene."}
+              {activeView === 'pose' && "Generate New Poses."}
+              {activeView === 'video' && "Bring it to Life."}
             </h2>
             <p className="text-lg text-[#86868b] leading-relaxed font-medium">
-              Compose models, locations, and objects instantly using AI.
+               {activeView === 'home' && "Compose models, locations, and objects instantly using AI."}
+               {activeView === 'pose' && "Upload an image and instantly generate professional fashion poses."}
+               {activeView === 'video' && "Turn your static fashion images into dynamic runway videos."}
             </p>
           </div>
         )}
@@ -312,118 +440,213 @@ export default function App() {
           )}
 
           {status === 'complete' && resultImageUrl ? (
-            <ResultDisplay resultUrl={resultImageUrl} onReset={handleReset} />
+            <ResultDisplay 
+              resultUrl={resultImageUrl} 
+              onReset={handleReset} 
+              onSave={handleSaveResultToLibrary}
+              onGenerateNewPose={handleGenerateNewPose}
+              onGenerateVideo={(instruction) => {
+                console.log("Generate video requested with instruction:", instruction);
+                // Placeholder for video generation
+              }}
+              onOpenLibrary={handleOpenLibraryResultPose}
+              librarySelection={resultPoseLibrarySelection}
+            />
           ) : (status === 'uploading' || status === 'processing') ? (
             <LoadingSpinner status={status} />
           ) : (
-            /* Upload Interface */
+            /* INTERFACE */
             <div className="space-y-8">
-              <div className="relative"> 
-                {/* 
-                    Wrapper for the grid to position the generation panel absolutely over it.
-                */}
-                
-                {isGenerationPanelOpen && (
-                    <GenerationPanel 
-                        mode={generationMode}
-                        onComplete={handleGenerationComplete}
-                        onCancel={() => setIsGenerationPanelOpen(false)}
-                        onSaveToElements={handleSaveGeneratedToElements}
-                        // Library integration
-                        onOpenLibrary={handleOpenLibraryGen}
-                        librarySelection={generationLibrarySelection}
-                    />
-                )}
-
-                <div className="grid md:grid-cols-[1fr,auto,1fr] gap-6 items-start">
-                  
-                  {/* SCENE COLUMN */}
-                  <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-500 delay-100 h-full flex flex-col">
-                    <div className="flex items-center justify-between mb-1 px-1">
-                      <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
-                        <ImageIcon size={16} className="text-[#86868b]" /> Scene
-                      </span>
-                      <button 
-                        onClick={() => openGenerationPanel('scene')}
-                        className="text-xs font-semibold text-[#0071e3] hover:text-[#2997ff] flex items-center gap-1.5 bg-[#0071e3]/10 hover:bg-[#0071e3]/20 px-3 py-1.5 rounded-full transition-colors"
-                      >
-                        <Wand2 size={12} />
-                        Generate Scene
-                      </button>
-                    </div>
-                    
-                    <div className="flex-1">
-                        <UploadZone
-                          label="Scene Image"
-                          description="Upload a scene, model, or location."
-                          onFileSelect={handleSceneFileSelect}
-                          previews={sceneImage ? [sceneImage.preview] : []}
-                          // Elements Props
-                          onSaveToElements={(name, type) => handleSaveToElements(name, type)}
-                          onOpenLibrary={() => handleOpenLibraryMain('main-scene')}
-                          hasItemsInLibrary={true}
-                          allowedTypesForSave={['scene', 'model', 'location']}
-                        />
-                    </div>
-                  </div>
-
-                  {/* MIDDLE COLUMN: INSTRUCTION & ARROW */}
-                  <div className="flex flex-col items-center justify-center gap-6 pt-12 md:pt-24 px-4">
-                     <div className="hidden md:flex text-[#424245]">
-                        <ArrowRight size={32} />
-                     </div>
-                     
-                     {/* Mobile Arrow */}
-                     <div className="md:hidden text-[#424245] py-4">
-                        <ArrowRight size={24} className="rotate-90" />
-                     </div>
-                  </div>
-
-                  {/* OBJECTS COLUMN */}
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500 delay-200 h-full flex flex-col">
-                    <div className="flex items-center justify-between mb-1 px-1">
-                      <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
-                        <Shirt size={16} className="text-[#86868b]" /> Object(s)
-                      </span>
-                      <button 
-                        onClick={() => openGenerationPanel('object')}
-                        className="text-xs font-semibold text-[#0071e3] hover:text-[#2997ff] flex items-center gap-1.5 bg-[#0071e3]/10 hover:bg-[#0071e3]/20 px-3 py-1.5 rounded-full transition-colors"
-                      >
-                         <Wand2 size={12} />
-                        Generate Object
-                      </button>
-                    </div>
-
-                    <div className="flex-1">
-                        <UploadZone
-                          label="Object Images"
-                          description="Upload garments or accessories."
-                          onFileSelect={handleObjectFilesSelect}
-                          previews={objectImages.map(img => img.preview)}
-                          // Elements Props
-                          onSaveToElements={(name, type) => handleSaveToElements(name, type)}
-                          onOpenLibrary={() => handleOpenLibraryMain('main-object')}
-                          hasItemsInLibrary={true}
-                          isMulti={true}
-                          allowedTypesForSave={['object']}
-                        />
-                    </div>
-                  </div>
-                </div>
-              </div>
               
-              {/* Instruction Input (Centered below grid) */}
+              {/* HOME VIEW: SWAP UI */}
+              {activeView === 'home' && (
+                  <>
+                    <div className="relative"> 
+                        {isGenerationPanelOpen && (
+                            <GenerationPanel 
+                                mode={generationMode}
+                                onComplete={handleGenerationComplete}
+                                onCancel={() => setIsGenerationPanelOpen(false)}
+                                onSaveToElements={handleSaveGeneratedToElements}
+                                // Library integration
+                                onOpenLibrary={handleOpenLibraryGen}
+                                librarySelection={generationLibrarySelection}
+                            />
+                        )}
+
+                        <div className="grid md:grid-cols-[1fr,auto,1fr] gap-6 items-start">
+                        
+                        {/* SCENE COLUMN */}
+                        <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-500 delay-100 h-full flex flex-col">
+                            <div className="flex items-center justify-between mb-1 px-1">
+                            <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
+                                <ImageIcon size={16} className="text-[#86868b]" /> Scene
+                            </span>
+                            <button 
+                                onClick={() => openGenerationPanel('scene')}
+                                className="text-xs font-semibold text-[#0071e3] hover:text-[#2997ff] flex items-center gap-1.5 bg-[#0071e3]/10 hover:bg-[#0071e3]/20 px-3 py-1.5 rounded-full transition-colors"
+                            >
+                                <Wand2 size={12} />
+                                Generate Scene
+                            </button>
+                            </div>
+                            
+                            <div className="flex-1">
+                                <UploadZone
+                                label="Scene Image"
+                                description="Upload a scene, model, or location."
+                                onFileSelect={handleSceneFileSelect}
+                                previews={sceneImage ? [sceneImage.preview] : []}
+                                // Elements Props
+                                onSaveToElements={(name, type) => handleSaveToElements(name, type)}
+                                onOpenLibrary={() => handleOpenLibraryMain('main-scene')}
+                                hasItemsInLibrary={true}
+                                allowedTypesForSave={['scene', 'model', 'location']}
+                                />
+                            </div>
+                        </div>
+
+                        {/* MIDDLE COLUMN: INSTRUCTION & ARROW */}
+                        <div className="flex flex-col items-center justify-center gap-6 pt-12 md:pt-24 px-4">
+                            <div className="hidden md:flex text-[#424245]">
+                                <ArrowRight size={32} />
+                            </div>
+                            
+                            {/* Mobile Arrow */}
+                            <div className="md:hidden text-[#424245] py-4">
+                                <ArrowRight size={24} className="rotate-90" />
+                            </div>
+                        </div>
+
+                        {/* OBJECTS COLUMN */}
+                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500 delay-200 h-full flex flex-col">
+                            <div className="flex items-center justify-between mb-1 px-1">
+                            <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
+                                <Shirt size={16} className="text-[#86868b]" /> Object(s)
+                            </span>
+                            <button 
+                                onClick={() => openGenerationPanel('object')}
+                                className="text-xs font-semibold text-[#0071e3] hover:text-[#2997ff] flex items-center gap-1.5 bg-[#0071e3]/10 hover:bg-[#0071e3]/20 px-3 py-1.5 rounded-full transition-colors"
+                            >
+                                <Wand2 size={12} />
+                                Generate Object
+                            </button>
+                            </div>
+
+                            <div className="flex-1">
+                                <UploadZone
+                                label="Object Images"
+                                description="Upload garments or accessories."
+                                onFileSelect={handleObjectFilesSelect}
+                                previews={objectImages.map(img => img.preview)}
+                                // Elements Props
+                                onSaveToElements={(name, type) => handleSaveToElements(name, type)}
+                                onOpenLibrary={() => handleOpenLibraryMain('main-object')}
+                                hasItemsInLibrary={true}
+                                isMulti={true}
+                                allowedTypesForSave={['object']}
+                                />
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+                  </>
+              )}
+
+              {/* POSE VIEW: SINGLE INPUT UI */}
+              {activeView === 'pose' && (
+                  <div className="max-w-xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
+                      <div className="space-y-4">
+                          <div className="flex items-center justify-between mb-1 px-1">
+                            <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
+                                <UserPlus size={16} className="text-[#86868b]" /> Source Image
+                            </span>
+                          </div>
+                          
+                          <div className="flex-1">
+                                <UploadZone
+                                label="Image to Repose"
+                                description="Upload a model or generated scene."
+                                onFileSelect={handleSceneFileSelect}
+                                previews={sceneImage ? [sceneImage.preview] : []}
+                                // Elements Props
+                                onSaveToElements={(name, type) => handleSaveToElements(name, type)}
+                                onOpenLibrary={() => handleOpenLibraryMain('main-scene')}
+                                hasItemsInLibrary={true}
+                                allowedTypesForSave={['scene', 'model']}
+                                />
+                            </div>
+                      </div>
+
+                      {/* Optional Product Image */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-1 px-1">
+                        <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
+                            <Shirt size={16} className="text-[#86868b]" /> Garment Reference (Optional)
+                        </span>
+                        </div>
+                        
+                        <div className="flex-1">
+                            <UploadZone
+                            label="Garment Image"
+                            description="Upload the garment to ensure consistency."
+                            onFileSelect={handleObjectFilesSelect}
+                            previews={objectImages.map(img => img.preview)}
+                            // Elements Props
+                            onSaveToElements={(name, type) => handleSaveToElements(name, type)}
+                            onOpenLibrary={() => handleOpenLibraryMain('main-object')}
+                            hasItemsInLibrary={true}
+                            isMulti={true}
+                            allowedTypesForSave={['object']}
+                            />
+                        </div>
+                    </div>
+                  </div>
+              )}
+
+               {/* VIDEO VIEW: SINGLE INPUT UI (Placeholder structure) */}
+               {activeView === 'video' && (
+                  <div className="max-w-xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="space-y-4">
+                          <div className="flex items-center justify-between mb-1 px-1">
+                            <span className="font-medium text-[#f5f5f7] flex items-center gap-2 text-base">
+                                <Video size={16} className="text-[#86868b]" /> Source Image
+                            </span>
+                          </div>
+                          
+                          <div className="flex-1">
+                                <UploadZone
+                                label="Image to Animate"
+                                description="Upload a model or generated scene."
+                                onFileSelect={handleSceneFileSelect}
+                                previews={sceneImage ? [sceneImage.preview] : []}
+                                // Elements Props
+                                onSaveToElements={(name, type) => handleSaveToElements(name, type)}
+                                onOpenLibrary={() => handleOpenLibraryMain('main-scene')}
+                                hasItemsInLibrary={true}
+                                allowedTypesForSave={['scene', 'model']}
+                                />
+                            </div>
+                      </div>
+                  </div>
+              )}
+              
+              {/* Instruction Input (Common for all views) */}
               <div className="max-w-2xl mx-auto pt-4 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-300">
                  <label className="text-sm font-medium text-[#f5f5f7] mb-2 flex items-center gap-2">
                     <MessageSquarePlus size={14} className="text-[#0071e3]" />
-                    Instructions (Optional)
+                    {activeView === 'pose' ? "Pose Instructions" : activeView === 'video' ? "Video Motion Instructions" : "Instructions (Optional)"}
                  </label>
                  <div className="relative">
                     <input
                         type="text"
                         value={instruction}
                         onChange={(e) => setInstruction(e.target.value)}
-                        placeholder="E.g. Swap the leather jacket onto the model..."
+                        placeholder={
+                            activeView === 'pose' ? "E.g. Walking towards camera, looking left..." :
+                            activeView === 'video' ? "E.g. Slow runway walk, turning around..." :
+                            "E.g. Swap the leather jacket onto the model..."
+                        }
                         className="w-full bg-[#1d1d1f] border border-white/10 rounded-2xl px-5 py-4 text-white placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#0071e3] transition-all"
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -432,20 +655,38 @@ export default function App() {
                  </div>
               </div>
 
-              {/* Action Button */}
+            {/* Action Button */}
               <div className="flex justify-center pt-8 pb-12">
                 <button
-                  onClick={handleGenerateSwap}
-                  disabled={!isReadyToGenerate}
+                  onClick={() => {
+                      if (activeView === 'home') handleGenerateSwap();
+                      else if (activeView === 'pose') handleGenerateNewPose();
+                      else if (activeView === 'video') console.log("Generate video clicked");
+                  }}
+                  disabled={activeView === 'home' ? !isReadyToGenerate : !isReadyToPose}
                   className={`
                     relative group overflow-hidden rounded-full px-10 py-4 font-semibold text-lg transition-all duration-300 transform
-                    ${isReadyToGenerate 
+                    ${(activeView === 'home' ? isReadyToGenerate : isReadyToPose)
                       ? 'bg-[#0071e3] text-white hover:bg-[#0077ED] hover:scale-105 shadow-[0_0_25px_rgba(0,113,227,0.3)]' 
                       : 'bg-[#1d1d1f] text-[#424245] cursor-not-allowed border border-[#333]'}
                   `}
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    {isReadyToGenerate ? 'Generate Scene' : 'Select Scene & Object'}
+                    {activeView === 'home' && (
+                        status === 'processing' || status === 'uploading' ? 'Processing...' :
+                        status === 'error' ? 'Try Again' : 
+                        'Generate Scene'
+                    )}
+                    {activeView === 'pose' && (
+                        status === 'processing' || status === 'uploading' ? 'Processing...' :
+                        status === 'error' ? 'Try Again' :
+                        'Generate Pose'
+                    )}
+                    {activeView === 'video' && (
+                        status === 'processing' || status === 'uploading' ? 'Processing...' :
+                        status === 'error' ? 'Try Again' :
+                        'Generate Video'
+                    )}
                   </span>
                 </button>
               </div>
@@ -456,8 +697,9 @@ export default function App() {
 
       {/* Footer */}
       <footer className="py-12 text-center border-t border-white/10 bg-black">
-        <p className="text-[#86868b] text-xs">&copy; 2024 StyleSwap AI. Virtual Scene Studio.</p>
+        <p className="text-[#86868b] text-xs">&copy; 2024 Lumira.ai. Virtual Scene Studio.</p>
       </footer>
     </div>
   );
 }
+

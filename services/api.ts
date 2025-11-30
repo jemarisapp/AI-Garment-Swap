@@ -5,35 +5,63 @@ import { SceneGenerationParams, ObjectGenerationParams } from '../types';
  * Helper to convert File to Base64 string
  */
 const fileToBase64 = (file: File): Promise<string> => {
+  return resizeImage(file);
+};
+
+/**
+ * Helper to resize an image to a maximum dimension, maintaining aspect ratio.
+ * Returns a Base64 string.
+ */
+const resizeImage = (file: File | Blob, maxDimension: number = 1024): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = () => {
-      // Remove the data:image/xyz;base64, prefix
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      resolve(base64);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDimension) {
+            height *= maxDimension / width;
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width *= maxDimension / height;
+            height = maxDimension;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            // Compress to JPEG with 0.8 quality to ensure smaller size
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85); 
+            const base64 = dataUrl.split(',')[1];
+            resolve(base64);
+        } else {
+            reject(new Error('Canvas context not available'));
+        }
+      };
+      img.onerror = reject;
+      img.src = event.target?.result as string;
     };
-    reader.onerror = error => reject(error);
+    reader.onerror = reject;
   });
 };
 
 /**
- * Helper to fetch a Blob URL and convert to Base64 (for Library items)
+ * Helper to fetch a Blob URL and convert to Base64 (for Library items), resizing if needed.
  */
 const urlToBase64 = async (url: string): Promise<string> => {
   const response = await fetch(url);
   const blob = await response.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(blob);
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = error => reject(error);
-  });
+  return resizeImage(blob);
 };
 
 /**
@@ -103,7 +131,7 @@ export const generateScene = async (params: SceneGenerationParams): Promise<stri
   // Convert Model Image to Base64 if present
   if (params.modelConfig.source !== 'generate' && params.modelConfig.image) {
     try {
-      const base64 = await fileToBase64(params.modelConfig.image);
+      const base64 = await resizeImage(params.modelConfig.image);
       processedParams.modelConfig = {
         ...params.modelConfig,
         imageUrl: base64 // Send base64 as imageUrl for the backend
@@ -127,7 +155,7 @@ export const generateScene = async (params: SceneGenerationParams): Promise<stri
   // Convert Location Image to Base64 if present
   if (params.locationConfig.source !== 'generate' && params.locationConfig.image) {
     try {
-      const base64 = await fileToBase64(params.locationConfig.image);
+      const base64 = await resizeImage(params.locationConfig.image);
       processedParams.locationConfig = {
         ...params.locationConfig,
         imageUrl: base64
@@ -176,6 +204,52 @@ export const generateObject = async (params: ObjectGenerationParams): Promise<st
 
   if (!response.ok) {
     throw new Error('Failed to generate object');
+  }
+
+  const data = await response.json();
+  return data.imageUrl;
+};
+
+/**
+ * Calls the Next.js API route to generate a new pose using existing inputs
+ */
+export const generateNewPose = async (
+  sceneUrl: string,
+  objectUrls: string[],
+  instruction: string
+): Promise<string> => {
+  // 1. Convert inputs to Base64
+  const sceneBase64 = await urlToBase64(sceneUrl);
+  
+  const objectBase64Promises = objectUrls.map(url => urlToBase64(url));
+  const objectBase64s = await Promise.all(objectBase64Promises);
+
+  // 2. Call Backend API
+  const response = await fetch('/api/pose', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sceneImage: sceneBase64,
+      objectImages: objectBase64s,
+      instruction
+    })
+  });
+
+  if (!response.ok) {
+    let errorMessage = `Failed to generate pose: ${response.status} ${response.statusText}`;
+    try {
+        const text = await response.text();
+        try {
+            const json = JSON.parse(text);
+            if (json.error) errorMessage = json.error;
+        } catch {
+            // response was not JSON, maybe HTML error page or empty
+            if (text) errorMessage += ` - Response: ${text.substring(0, 200)}`;
+        }
+    } catch (e) {
+        // reading text failed
+    }
+    throw new Error(errorMessage);
   }
 
   const data = await response.json();
