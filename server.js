@@ -929,8 +929,13 @@ High quality, 4k, fashion photography style.`;
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 API Server running on http://localhost:${PORT}`);
-  console.log(`✅ API routes available at /api/generate, /api/swap, and /api/pose`);
-});
+// Start Server
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 API Server running on http://localhost:${PORT}`);
+    console.log(`✅ API routes available at /api/generate, /api/swap, and /api/pose`);
+  });
+}
+
+export default app;
 
